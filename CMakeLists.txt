@@ -75,3 +75,18 @@ target_link_libraries(
     unitree_sdk2
     pinocchio::pinocchio
 )
+# =====================================================
+# G1 Keyboard IK Control
+# =====================================================
+
+add_executable(
+    g1_keyboard_ik
+    src/keyboard_ik.cpp
+)
+
+target_link_libraries(
+    g1_keyboard_ik
+    PRIVATE
+    unitree_sdk2
+    pinocchio::pinocchio
+)
