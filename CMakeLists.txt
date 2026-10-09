@@ -39,3 +39,39 @@ target_link_libraries(
     PRIVATE
     unitree_sdk2
 )
+# =====================================================
+# Pinocchio
+# =====================================================
+
+find_package(pinocchio REQUIRED)
+
+# =====================================================
+# G1 FK Reader
+# =====================================================
+
+add_executable(
+    g1_arm_fk
+    src/fk_reader.cpp
+)
+
+target_link_libraries(
+    g1_arm_fk
+    PRIVATE
+    unitree_sdk2
+    pinocchio::pinocchio
+)
+# =====================================================
+# G1 Dual Arm Offline IK Test
+# =====================================================
+
+add_executable(
+    g1_arm_ik_test
+    src/ik_test.cpp
+)
+
+target_link_libraries(
+    g1_arm_ik_test
+    PRIVATE
+    unitree_sdk2
+    pinocchio::pinocchio
+)
