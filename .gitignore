@@ -66,3 +66,23 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+# Build files
+build/
+cmake-build-*/
+
+# Compiler files
+*.o
+*.so
+*.a
+*.out
+
+# IDE
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+*.log
