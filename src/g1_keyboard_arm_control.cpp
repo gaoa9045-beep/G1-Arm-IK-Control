@@ -49,7 +49,7 @@ constexpr int kRightArmMotorStart = 22;
 constexpr int kArmJointCount = 14;
 constexpr int kArmSdkWeightIndex = 29;
 
-constexpr double kStep = 0.010;                  // 10 mm per key
+constexpr double kStep = 0.050; // 50 mm per key
 constexpr double kIkTolerance = 0.0005;          // 0.5 mm
 constexpr double kDamping = 0.03;
 constexpr double kMaxJointChangeFromStart = 0.20; // rad
@@ -495,7 +495,7 @@ int main(int argc, char** argv) {
                   << " LEFT:  W/S = X +/-; A/D = Y +/-; Q/E = Z +/-\n"
                   << " RIGHT: I/K = X +/-; J/L = Y +/-; U/O = Z +/-\n"
                   << " X = ramp ArmSDK weight to zero and exit\n"
-                  << "Limits: 5 mm per key, 5 cm workspace radius, 0.20 rad joint deviation from startup.\n\n"
+                  << "Limits: 50 mm per key, 5 cm workspace radius, 0.20 rad joint deviation from startup.\n\n"
                   << "No motor commands have been sent yet.\n"
                   << "Type exactly ENABLE_ARMSDK to enable live control: " << std::flush;
 
@@ -575,7 +575,7 @@ int main(int argc, char** argv) {
             if (controller.joinable()) controller.join();
             return 1;
         }
-        std::cout << "Arms settled. Each accepted key moves the accumulated palm target by 5 mm on one axis.\n";
+        std::cout << "Arms settled. Each accepted key moves the accumulated palm target by 50 mm on one axis.\n";
 
         while (!ShouldStop()) {
             std::cout << "\nKey > " << std::flush;
