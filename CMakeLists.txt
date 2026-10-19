@@ -207,3 +207,19 @@ target_link_libraries(
     unitree_sdk2
     pinocchio::pinocchio
 )
+
+# ==========================================
+# G1 Keyboard Palm IK + ArmSDK
+# ==========================================
+
+add_executable(
+    g1_keyboard_arm_control
+    src/g1_keyboard_arm_control.cpp
+)
+
+target_link_libraries(
+    g1_keyboard_arm_control
+    PRIVATE
+    unitree_sdk2
+    pinocchio::pinocchio
+)
