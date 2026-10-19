@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include <limits>
 #include <mutex>
 #include <poll.h>
 #include <stdexcept>
@@ -47,7 +48,9 @@ constexpr char kArmSdkTopic[] = "rt/arm_sdk";
 constexpr int kLeftArmMotorStart = 15;
 constexpr int kRightArmMotorStart = 22;
 constexpr int kArmJointCount = 14;
+constexpr int kWaistJointCount = 3;
 constexpr int kArmSdkWeightIndex = 29;
+constexpr std::array<int, kWaistJointCount> kWaistMotorIds = {12, 13, 14};
 
 constexpr double kStep = 0.050; // 50 mm per key
 constexpr double kIkTolerance = 0.0005;          // 0.5 mm
@@ -56,6 +59,7 @@ constexpr double kMaxJointChangeFromStart = 0.20; // rad
 constexpr double kMaxWorkspaceRadius = 0.05;     // 5 cm from start
 constexpr double kMaxStateAgeSeconds = 0.25;
 constexpr double kMaxFeedbackError = 0.05;        // rad; reject new targets until the arms settle
+constexpr double kMaxWaistHoldError = 0.05;        // rad; release ArmSDK if waist drifts from its hold target
 constexpr double kControlDt = 0.02;              // 50 Hz
 constexpr double kMaxCommandVelocity = 0.20;      // rad/s
 constexpr float kWeightStep = 0.004f;             // 0 -> 1 in about 5 s at 50 Hz
@@ -184,9 +188,20 @@ bool FillWaistFromState(const pinocchio::Model& model,
         if (model.joints[joint_id].nq() != 1) {
             throw std::runtime_error("Expected a one-DoF joint: " + waist_names[i]);
         }
-        const double measured = state.motor_state().at(12 + i).q();
+        const double measured = state.motor_state().at(kWaistMotorIds[i]).q();
         if (!std::isfinite(measured)) return false;
         q[model.joints[joint_id].idx_q()] = measured;
+    }
+    return true;
+}
+
+bool CopyWaistPositionsFromState(
+    const LowState& state,
+    std::array<float, kWaistJointCount>& waist_q) {
+    for (int i = 0; i < kWaistJointCount; ++i) {
+        const float measured = state.motor_state().at(kWaistMotorIds[i]).q();
+        if (!std::isfinite(measured)) return false;
+        waist_q[i] = measured;
     }
     return true;
 }
@@ -211,6 +226,35 @@ bool ArmJointSpeedsAcceptable(const LowState& state,
         max_speed = std::max(max_speed, std::abs(measured_dq));
     }
     return max_speed <= max_allowed_speed;
+}
+
+bool WaistJointSpeedsAcceptable(const LowState& state,
+                                double max_allowed_speed,
+                                double& max_speed) {
+    max_speed = 0.0;
+    for (const int motor_id : kWaistMotorIds) {
+        const double measured_dq = state.motor_state().at(motor_id).dq();
+        if (!std::isfinite(measured_dq)) return false;
+        max_speed = std::max(max_speed, std::abs(measured_dq));
+    }
+    return max_speed <= max_allowed_speed;
+}
+
+bool WaistHoldErrorAcceptable(
+    const LowState& state,
+    const std::array<float, kWaistJointCount>& hold_target,
+    double& max_error) {
+    max_error = 0.0;
+    for (int i = 0; i < kWaistJointCount; ++i) {
+        const double measured = state.motor_state().at(kWaistMotorIds[i]).q();
+        if (!std::isfinite(measured)) {
+            max_error = std::numeric_limits<double>::infinity();
+            return false;
+        }
+        max_error = std::max(max_error,
+                             std::abs(measured - hold_target[i]));
+    }
+    return max_error <= kMaxWaistHoldError;
 }
 
 void UpdateFK(const pinocchio::Model& model,
@@ -296,10 +340,13 @@ void PrintPosition(const std::string& label, const Eigen::Vector3d& p) {
               << " m\n";
 }
 
-void ArmSdkControlLoop(std::shared_ptr<ChannelPublisher<LowCmd>> publisher,
-                       std::array<float, kArmJointCount> initial_q) {
+void ArmSdkControlLoop(
+    std::shared_ptr<ChannelPublisher<LowCmd>> publisher,
+    std::array<float, kArmJointCount> initial_q,
+    std::array<float, kWaistJointCount> waist_hold_q) {
     std::array<float, kArmJointCount> command_q = initial_q;
     float weight = 0.0f;
+    bool waist_error_reported = false;
     auto next_tick = Clock::now();
 
     while (true) {
@@ -318,6 +365,20 @@ void ArmSdkControlLoop(std::shared_ptr<ChannelPublisher<LowCmd>> publisher,
             // Stop accepting new targets and ramp ArmSDK weight down if feedback
             // becomes stale or the robot's mode_machine changes during control.
             RequestStop();
+        }
+        if (state_fresh) {
+            double max_waist_error = 0.0;
+            if (!WaistHoldErrorAcceptable(state, waist_hold_q,
+                                          max_waist_error)) {
+                if (!waist_error_reported) {
+                    std::cerr << "Waist hold error exceeded "
+                              << kMaxWaistHoldError
+                              << " rad (max error=" << max_waist_error
+                              << " rad); releasing ArmSDK.\n";
+                    waist_error_reported = true;
+                }
+                RequestStop();
+            }
         }
 
         const bool stopping = ShouldStop();
@@ -357,6 +418,18 @@ void ArmSdkControlLoop(std::shared_ptr<ChannelPublisher<LowCmd>> publisher,
             motor.kd(kKd);
         }
 
+        // Hold all three waist joints at the measured posture captured immediately
+        // before ArmSDK enable: yaw=12, roll=13, pitch=14. Do not command zero.
+        for (int i = 0; i < kWaistJointCount; ++i) {
+            auto& motor = command.motor_cmd().at(kWaistMotorIds[i]);
+            motor.mode(1);
+            motor.q(waist_hold_q[i]);
+            motor.dq(0.0f);
+            motor.tau(0.0f);
+            motor.kp(kKp);
+            motor.kd(kKd);
+        }
+
         // G1 ArmSDK weight: motor_cmd[29].q(), 0=disabled, 1=enabled.
         command.motor_cmd().at(kArmSdkWeightIndex).q(weight);
         command.crc() = crc32_core(
@@ -383,9 +456,11 @@ bool TrackingErrorAcceptable(const LowState& state,
     return max_error <= kMaxFeedbackError;
 }
 
-bool WaitForArmsToSettle(const std::array<float, kArmJointCount>& target,
-                         double max_allowed_speed,
-                         double timeout_seconds) {
+bool WaitForArmsAndWaistToSettle(
+    const std::array<float, kArmJointCount>& arm_target,
+    const std::array<float, kWaistJointCount>& waist_target,
+    double max_allowed_speed,
+    double timeout_seconds) {
     const auto deadline = Clock::now() +
         std::chrono::duration_cast<Clock::duration>(
             std::chrono::duration<double>(timeout_seconds));
@@ -403,12 +478,20 @@ bool WaitForArmsToSettle(const std::array<float, kArmJointCount>& target,
 
         double max_speed = 0.0;
         double max_error = 0.0;
-        const bool speed_ok = ArmJointSpeedsAcceptable(
+        const bool arm_speed_ok = ArmJointSpeedsAcceptable(
             state, max_allowed_speed, max_speed);
-        const bool tracking_ok = TrackingErrorAcceptable(
-            state, target, max_error);
+        const bool arm_tracking_ok = TrackingErrorAcceptable(
+            state, arm_target, max_error);
 
-        if (speed_ok && tracking_ok) {
+        double max_waist_speed = 0.0;
+        double max_waist_error = 0.0;
+        const bool waist_speed_ok = WaistJointSpeedsAcceptable(
+            state, max_allowed_speed, max_waist_speed);
+        const bool waist_tracking_ok = WaistHoldErrorAcceptable(
+            state, waist_target, max_waist_error);
+
+        if (arm_speed_ok && arm_tracking_ok &&
+            waist_speed_ok && waist_tracking_ok) {
             ++stable_samples;
             if (stable_samples >= kRequiredStableSamples) return true;
         } else {
@@ -480,6 +563,7 @@ int main(int argc, char** argv) {
         right.start_position = GetPalmPosition(model, data, q, torso, right.frame);
 
         std::array<float, kArmJointCount> initial_arm_q{};
+        std::array<float, kWaistJointCount> initial_waist_q{};
         if (!CopyArmPositionsFromState(state, initial_arm_q)) {
             throw std::runtime_error("Non-finite initial arm joint state");
         }
@@ -529,10 +613,22 @@ int main(int argc, char** argv) {
             std::cerr << "Non-finite arm feedback immediately before enabling; no commands were sent.\n";
             return 1;
         }
+        if (!CopyWaistPositionsFromState(enable_state, initial_waist_q)) {
+            std::cerr << "Non-finite waist feedback immediately before enabling; no commands were sent.\n";
+            return 1;
+        }
         double max_startup_speed = 0.0;
         if (!ArmJointSpeedsAcceptable(enable_state, 0.15, max_startup_speed)) {
             std::cerr << "Arm joints are moving too quickly to enable safely (max |dq|="
                       << max_startup_speed << " rad/s). Let the arms settle and restart.\n";
+            return 1;
+        }
+        double max_startup_waist_speed = 0.0;
+        if (!WaistJointSpeedsAcceptable(enable_state, 0.15,
+                                        max_startup_waist_speed)) {
+            std::cerr << "Waist joints are moving too quickly to enable safely (max |dq|="
+                      << max_startup_waist_speed
+                      << " rad/s). Let the waist settle and restart.\n";
             return 1;
         }
         {
@@ -541,7 +637,7 @@ int main(int argc, char** argv) {
         }
 
         // Cartesian goals are accumulated from the startup palm positions.
-        // Each key therefore changes exactly one torso-frame coordinate by 5 mm,
+        // Each key changes one torso-frame coordinate by the configured 50 mm,
         // rather than adding the step to a potentially drifting feedback pose.
         Eigen::Vector3d left_goal = left.start_position;
         Eigen::Vector3d right_goal = right.start_position;
@@ -550,13 +646,19 @@ int main(int argc, char** argv) {
         PrintPosition("Enable left palm (torso frame): ", left.start_position);
         PrintPosition("Enable right palm (torso frame):", right.start_position);
         std::cout << "Max arm joint speed at enable: " << max_startup_speed << " rad/s\n";
+        std::cout << "Max waist joint speed at enable: "
+                  << max_startup_waist_speed << " rad/s\n";
+        std::cout << "Waist hold targets (rad): yaw=" << initial_waist_q[0]
+                  << ", roll=" << initial_waist_q[1]
+                  << ", pitch=" << initial_waist_q[2] << "\n";
 
         // Create the live command publisher only after confirmation and fresh-state checks.
         auto publisher = std::make_shared<ChannelPublisher<LowCmd>>(kArmSdkTopic);
         publisher->InitChannel();
 
         std::cout << "ArmSDK publisher initialized. Enabling from the refreshed measured posture with a 5 s weight ramp.\n";
-        controller = std::thread(ArmSdkControlLoop, publisher, initial_arm_q);
+        controller = std::thread(ArmSdkControlLoop, publisher,
+                                 initial_arm_q, initial_waist_q);
 
         std::cout << "Waiting for the 5 s ArmSDK handover ramp to complete; keyboard targets are disabled.\n";
         while (!ShouldStop() && !g_control_ready.load()) {
@@ -568,14 +670,16 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        std::cout << "Weight ramp complete. Waiting for the arms to settle before accepting keyboard input...\n";
-        if (!WaitForArmsToSettle(initial_arm_q, 0.05, 8.0)) {
-            std::cerr << "Arms did not settle within the allowed time, or state/mode became invalid. Releasing ArmSDK.\n";
+        std::cout << "Weight ramp complete. Waiting for the arms and waist to settle before accepting keyboard input...\n";
+        if (!WaitForArmsAndWaistToSettle(
+                initial_arm_q, initial_waist_q, 0.05, 8.0)) {
+            std::cerr << "Arms/waist did not settle within the allowed time, or state/mode became invalid. Releasing ArmSDK.\n";
             RequestStop();
             if (controller.joinable()) controller.join();
             return 1;
         }
-        std::cout << "Arms settled. Each accepted key moves the accumulated palm target by 50 mm on one axis.\n";
+        std::cout << "Arms and waist settled. Waist yaw/roll/pitch are held at the captured startup angles.\n";
+        std::cout << "Each accepted key moves the accumulated palm target by 50 mm on one axis.\n";
 
         while (!ShouldStop()) {
             std::cout << "\nKey > " << std::flush;
