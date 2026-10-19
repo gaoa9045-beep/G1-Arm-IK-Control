@@ -90,3 +90,104 @@ target_link_libraries(
     unitree_sdk2
     pinocchio::pinocchio
 )
+# =====================================================
+# G1 ArmSDK Real Robot Hold Test
+# =====================================================
+
+add_executable(
+    g1_arm_hold_test
+    src/arm_hold_test.cpp
+)
+
+target_link_libraries(
+    g1_arm_hold_test
+    PRIVATE
+    unitree_sdk2
+)
+
+# =====================================================
+# G1 Passive Arm Diagnostic
+# =====================================================
+
+add_executable(
+    g1_arm_diagnostic
+    src/arm_diagnostic.cpp
+)
+
+target_link_libraries(
+    g1_arm_diagnostic
+    PRIVATE
+    unitree_sdk2
+)
+# =====================================================
+# G1 ArmSDK Handover Dry Run
+# =====================================================
+
+add_executable(
+    g1_arm_handover_dryrun
+    src/arm_handover_dryrun.cpp
+)
+
+target_link_libraries(
+    g1_arm_handover_dryrun
+    PRIVATE
+    unitree_sdk2
+)
+# ==========================================
+# G1 Robot Mode Reader (READ ONLY)
+# ==========================================
+
+add_executable(
+    g1_mode_reader
+    src/g1_mode_reader.cpp
+)
+
+target_link_libraries(
+    g1_mode_reader
+    PRIVATE
+    unitree_sdk2
+)
+
+# ==========================================
+# G1 Motion Service Status Reader (QUERY ONLY)
+# ==========================================
+
+add_executable(
+    g1_motion_status
+    src/g1_motion_status.cpp
+)
+
+target_link_libraries(
+    g1_motion_status
+    PRIVATE
+    unitree_sdk2
+)
+# ==========================================
+# G1 ArmSDK Command Dry Run (READ ONLY)
+# ==========================================
+
+add_executable(
+    g1_arm_command_dryrun
+    src/g1_arm_command_dryrun.cpp
+)
+
+target_link_libraries(
+    g1_arm_command_dryrun
+    PRIVATE
+    unitree_sdk2
+)
+# ==========================================
+# G1 CRC32 Comparison (OFFLINE ONLY)
+# ==========================================
+
+add_executable(
+    g1_crc_compare
+    src/g1_crc_compare.cpp
+)
+
+target_link_libraries(
+    g1_crc_compare
+    PRIVATE
+    unitree_sdk2
+)
+
