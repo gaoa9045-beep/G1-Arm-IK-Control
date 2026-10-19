@@ -191,3 +191,19 @@ target_link_libraries(
     unitree_sdk2
 )
 
+
+# =====================================================
+# G1 Keyboard-Controlled Palm IK (OFFLINE ONLY)
+# =====================================================
+
+add_executable(
+    g1_keyboard_palm_ik
+    src/keyboard_palm_ik.cpp
+)
+
+target_link_libraries(
+    g1_keyboard_palm_ik
+    PRIVATE
+    unitree_sdk2
+    pinocchio::pinocchio
+)
