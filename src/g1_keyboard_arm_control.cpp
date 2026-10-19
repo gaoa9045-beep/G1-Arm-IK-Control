@@ -49,7 +49,7 @@ constexpr int kRightArmMotorStart = 22;
 constexpr int kArmJointCount = 14;
 constexpr int kArmSdkWeightIndex = 29;
 
-constexpr double kStep = 0.005;                  // 5 mm per key
+constexpr double kStep = 0.010;                  // 10 mm per key
 constexpr double kIkTolerance = 0.0005;          // 0.5 mm
 constexpr double kDamping = 0.03;
 constexpr double kMaxJointChangeFromStart = 0.20; // rad
